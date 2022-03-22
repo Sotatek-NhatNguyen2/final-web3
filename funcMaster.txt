@@ -1,0 +1,152 @@
+
+import '@openzeppelin/contracts/utils/math/SafeMath.sol';
+import '@openzeppelin/contracts/token/ERC20/IERC20.sol';
+import '@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol';
+import '@openzeppelin/contracts/access/Ownable.sol';
+
+import "./DD2Token.sol";
+import "./interface/IWETH.sol";
+
+// import "@nomiclabs/buidler/console.sol";
+
+contract MasterChef is Ownable {
+    using SafeMath for uint256;
+    using SafeERC20 for IERC20;
+
+    // Info of each user.
+    struct UserInfo {
+        uint256 amount;     // How many LP tokens the user has provided.
+        uint256 rewardDebt; // Reward debt. See explanation below.
+        //
+        // We do some fancy math here. Basically, any point in time, the amount of DD2s
+        // entitled to a user but is pending to be distributed is:
+        //
+        //   pending reward = (user.amount * pool.accDD2PerShare) - user.rewardDebt
+        //
+        // Whenever a user deposits or withdraws LP tokens to a pool. Here's what happens:
+        //   1. The pool's `accDD2PerShare` (and `lastRewardBlock`) gets updated.
+        //   2. User receives the pending reward sent to his/her address.
+        //   3. User's `amount` gets updated.
+        //   4. User's `rewardDebt` gets updated.
+    }
+
+    // WETH
+    IWETH public weth = IWETH(0xc778417E063141139Fce010982780140Aa0cD5Ab);
+    // The DD2 TOKEN!
+    DD2Token public dd2;
+    // DD2 tokens created per block.
+    uint256 public dd2PerBlock;
+
+    // Last block number that DD2s distribution occurs.
+    uint256 lastRewardBlock;
+    // Accumulated DD2s per share, times 1e12. See below.
+    uint256 accDD2PerShare;
+    // Info of each user that stakes LP tokens.
+    mapping (address => UserInfo) public userInfo;
+
+    event Deposit(address indexed user, uint256 amount);
+    event Withdraw(address indexed user, uint256 amount);
+    event EmergencyWithdraw(address indexed user, uint256 amount);
+
+    constructor(
+        DD2Token _dd2,
+        uint256 _dd2PerBlock
+    ) {
+        dd2 = _dd2;
+        dd2PerBlock = _dd2PerBlock;
+
+        lastRewardBlock = block.number;
+        accDD2PerShare = 0;
+    }
+
+    // Return block number from _from to _to block.
+    function getBlocks(uint256 _from, uint256 _to) public view returns (uint256) {
+        return _to.sub(_from);
+    }
+
+    // View function to see pending DD2s on frontend.
+    function pendingDD2(address _user) external view returns (uint256) {
+        UserInfo storage user = userInfo[_user];
+        uint256 wethSupply = weth.balanceOf(address(this));
+				uint256 pendingAccDD2PerShare = accDD2PerShare;
+        if (block.number > lastRewardBlock && wethSupply != 0) {
+            uint256 blocks = getBlocks(lastRewardBlock, block.number);
+            uint256 dd2Reward = blocks.mul(dd2PerBlock);
+            pendingAccDD2PerShare = accDD2PerShare.add(dd2Reward.mul(1e12).div(wethSupply));
+        }
+        return user.amount.mul(pendingAccDD2PerShare).div(1e12).sub(user.rewardDebt);
+    }
+
+    // Update reward variables of the pool to be up-to-date.
+    function updatePool() public {
+        if (block.number <= lastRewardBlock) {
+            return;
+        }
+        uint256 wethSupply = weth.balanceOf(address(this));
+        if (wethSupply == 0) {
+            lastRewardBlock = block.number;
+            return;
+        }
+        uint256 blocks = getBlocks(lastRewardBlock, block.number);
+        uint256 dd2Reward = blocks.mul(dd2PerBlock);
+        dd2.mint(address(this), dd2Reward);
+        accDD2PerShare = accDD2PerShare.add(dd2Reward.mul(1e12).div(wethSupply));
+        lastRewardBlock = block.number;
+    }
+
+    // Deposit WETH tokens to MasterChef for DD2 allocation.
+    function deposit(uint256 _amount) public {
+        UserInfo storage user = userInfo[msg.sender];
+        updatePool();
+        if (user.amount > 0) {
+            uint256 pending = user.amount.mul(accDD2PerShare).div(1e12).sub(user.rewardDebt);
+            if(pending > 0) {
+                safeDD2Transfer(msg.sender, pending);
+            }
+        }
+        if (_amount > 0) {
+            weth.transferFrom(address(msg.sender), address(this), _amount);
+            user.amount = user.amount.add(_amount);
+        }
+        user.rewardDebt = user.amount.mul(accDD2PerShare).div(1e12);
+        emit Deposit(msg.sender, _amount);
+    }
+
+    // Withdraw WETH tokens from MasterChef.
+    function withdraw(uint256 _amount) public {
+        UserInfo storage user = userInfo[msg.sender];
+        require(user.amount >= _amount, "withdraw: not good");
+
+        updatePool();
+        uint256 pending = user.amount.mul(accDD2PerShare).div(1e12).sub(user.rewardDebt);
+        if(pending > 0) {
+            safeDD2Transfer(msg.sender, pending);
+        }
+        if(_amount > 0) {
+            user.amount = user.amount.sub(_amount);
+            weth.transfer(address(msg.sender), _amount);
+        }
+        
+        user.rewardDebt = user.amount.mul(accDD2PerShare).div(1e12);
+        emit Withdraw(msg.sender, _amount);
+    }
+
+    // Withdraw without caring about rewards. EMERGENCY ONLY.
+    function emergencyWithdraw() public {
+        UserInfo storage user = userInfo[msg.sender];
+        weth.transfer(address(msg.sender), user.amount);
+        emit EmergencyWithdraw(msg.sender, user.amount);
+        user.amount = 0;
+        user.rewardDebt = 0;
+    }
+
+    // Safe dd2 transfer function, just in case if rounding error causes pool to not have enough DD2s.
+    function safeDD2Transfer(address _to, uint256 _amount) internal {
+      uint256 dd2Bal = dd2.balanceOf(address(this));
+        if (_amount > dd2Bal) {
+            dd2.transfer(_to, dd2Bal);
+        } else {
+            dd2.transfer(_to, _amount);
+        }
+    }
+}
