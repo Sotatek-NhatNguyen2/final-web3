@@ -13,7 +13,7 @@ function Contract () {
         return { masterContract, wethContract, web3 };
     }
 
-    return null;
+    return {}
 }
 export default Contract;
 

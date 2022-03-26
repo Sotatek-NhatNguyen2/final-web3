@@ -24,3 +24,5 @@ export const walletConnector = new WalletConnectConnector({
   bridge: BRIDGE_URL,
   qrcode: true
 })
+
+
