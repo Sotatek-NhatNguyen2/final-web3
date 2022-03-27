@@ -4,9 +4,13 @@ import Contract from "./contract";
 import {
   injected,
   walletConnector,
-  privateKey,
   masterAddress,
+  wethAddress,
 } from "./constant";
+import masterABI from "./masterABI.json";
+import wethABI from "./wethABI.json";
+
+import moment from "moment";
 
 import { queryHistory, queryGraph } from "./query";
 import {
@@ -22,7 +26,8 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
-import Converter from "timestamp-conv";
+
+import { Multicall } from "ethereum-multicall";
 
 const style = {
   position: "absolute",
@@ -40,18 +45,18 @@ function App() {
   const {account, chainId, library, activate} = useWeb3React();
   const [balance, setBalance] = useState(0);
   const [stake, setStake] = useState(0);
-  const [earned, seteEarned] = useState(0);
+  const [earned, setEarned] = useState(0);
   const [allowance, setAllowance] = useState(0);
   const [totalStake, setTotalStake] = useState(0);
   const [estimaseGas, setEstimateGas] = useState(0);
   const [history, setHistory] = useState({});
-
   const [valueDeposit, setValueDeposit] = useState('0');
   const [valueWithdraw, setValueWithdraw] = useState('0');
   const [openDeposit, setOpenDeposit] = useState(false);
   const [openWithdraw, setOpenWithdraw] = useState(false);
 
   const {masterContract, wethContract, web3} = Contract();
+
   const roundNumber = (num) => Math.round(num * 1000) / 1000;
   const formatNumber = (num) => web3.utils.fromWei(num);
   const toNumber = (num) => web3.utils.toWei(num);
@@ -68,25 +73,25 @@ function App() {
     });
   };
 
-  const getBalance = async () => {
-    const balance = await wethContract.methods.balanceOf(account).call();
-    setBalance(formatNumber(balance));
-  };
+  // const getBalance = async () => {
+  //   const balance = await wethContract.methods.balanceOf(account).call();
+  //   setBalance(roundNumber(formatNumber(balance)));
+  // };
 
-  const getAmount = async () => {
-    const amount = await masterContract.methods.userInfo(account).call();
-    setStake(formatNumber(amount.amount));
-  };
+  // const getAmount = async () => {
+  //   const amount = await masterContract.methods.userInfo(account).call();
+  //   setStake(roundNumber(formatNumber(amount.amount)));
+  // };
 
-  const geEarnDD2 = async () => {
-    const earned = await masterContract.methods.pendingDD2(account).call();
-    seteEarned(roundNumber(formatNumber(earned)));
-  };
+  // const geEarnDD2 = async () => {
+  //   const earned = await masterContract.methods.pendingDD2(account).call();
+  //   setEarned(roundNumber(formatNumber(earned)));
+  // };
 
-  const getTotalStake = async () => {
-    const total = await wethContract.methods.balanceOf(masterAddress).call();
-    setTotalStake(roundNumber(formatNumber(total)));
-  };
+  // const getTotalStake = async () => {
+  //   const total = await wethContract.methods.balanceOf(masterAddress).call();
+  //   setTotalStake(roundNumber(formatNumber(total)));
+  // };
 
   const getEstimateGas = async () => {
     const estimaseGas = await masterContract.methods
@@ -104,21 +109,22 @@ function App() {
         setAllowance(Number(res));
       })
       .catch((err) => {
-        alert(err);
+        console.log(err);
       });
   };
 
   const handleApprove = async () => {
-    wethContract.methods
-      .approve(masterAddress, toString(toNumber(balance)))
+    await wethContract.methods
+      .approve(masterAddress, toString(bigNumber(10000)))
       .send({ from: account })
       .then((res) => {
         console.log("res", res);
-        checkApprove();
       })
       .catch((err) => {
         console.log("err", err);
       });
+
+    checkApprove();
   };
 
   const getHistory = async () => {
@@ -144,7 +150,6 @@ function App() {
       
     getHistory();
   };
-
 
   const handleDeposit = async () => {
     await getEstimateGas();
@@ -189,26 +194,71 @@ function App() {
       getHistory();
   };
 
+  const multicallData = async () => {
+    if ((masterContract && wethContract && web3)) {
+      const multicall = new Multicall({
+        web3Instance: web3,
+        tryAggregate: true,
+      });
+
+      const multi = [
+        {
+          reference: "dataWeth",
+          contractAddress: wethAddress,
+          abi: wethABI,
+          calls: [
+            {
+              methodName: "balanceOf",
+              methodParameters: [account],
+            },
+            {
+              methodName: "balanceOf",
+              methodParameters: [masterAddress],
+            },
+          ],
+        },
+        {
+          reference: "dataMaster",
+          contractAddress: masterAddress,
+          abi: masterABI,
+          calls: [
+            {
+              methodName: "userInfo",
+              methodParameters: [account],
+            },
+            {
+              methodName: "pendingDD2",
+              methodParameters: [account],
+            },
+          ],
+        },
+      ];
+
+      const results = await multicall.call(multi);
+      const dataMaster = results.results.dataMaster.callsReturnContext.map(item => item.returnValues);
+      const dataWeth = results.results.dataWeth.callsReturnContext.map(item => item.returnValues);
+      setStake(roundNumber(formatNumber(dataMaster[0][0].hex)))
+      setEarned(roundNumber(formatNumber(dataMaster[1][0].hex)))
+      setBalance(roundNumber(formatNumber(dataWeth[0][0].hex)))
+      setTotalStake(roundNumber(formatNumber(dataWeth[1][0].hex)))
+    }
+  }
 
   useEffect(() => {
     if (account) {
-      web3.eth.accounts.wallet.add(privateKey);
-      getBalance();
-      getAmount();
-      geEarnDD2();
-      checkApprove();
-      getTotalStake();
+      multicallData();
       getHistory();
+      checkApprove();
+      // getBalance();
+      // getAmount();
+      // geEarnDD2();
+      // getTotalStake();
     }
   }, [account]);
 
   const convertTime = (time) => {
-    if(time) {
-      const Date = new Converter.date(time);
-      return `${Date.getHour()}:${Date.getMinute()} ${Date.getDay()}/${Date.getMonth()}/${Date.getYear()}`;
-    }
+    return moment.unix(time).format("HH:mm DD/MM/YYYY")
   }
-
   
   return (
     <div className="App">
@@ -228,7 +278,7 @@ function App() {
               }}
             >
               <Box sx={{ display: "flex", justifyContent: "space-between" }}>
-                <h3>Wallet addresss: {account}</h3>
+                <h3 style={{marginRight: "20px"}}>Wallet addresss: {account}</h3>
                 <h3>Balance: {balance} WETH</h3>
               </Box>
               <Box sx={{ display: "flex", justifyContent: "space-between" }}>
