@@ -101,20 +101,20 @@ function App() {
     setEstimateGas(estimaseGas);
   };
 
-  const checkApprove = async () => {
-    wethContract.methods
-      .allowance(account, masterAddress)
-      .call()
-      .then((res) => {
-        setAllowance(Number(res));
-      })
-      .catch((err) => {
-        console.log(err);
-      });
-  };
+  // const checkAllowance = async () => {
+  //   wethContract.methods
+  //     .allowance(account, masterAddress)
+  //     .call()
+  //     .then((res) => {
+  //       setAllowance(Number(res));
+  //     })
+  //     .catch((err) => {
+  //       console.log(err);
+  //     });
+  // };
 
   const handleApprove = async () => {
-    await wethContract.methods
+    wethContract.methods
       .approve(masterAddress, toString(bigNumber(10000)))
       .send({ from: account })
       .then((res) => {
@@ -123,8 +123,6 @@ function App() {
       .catch((err) => {
         console.log("err", err);
       });
-
-    checkApprove();
   };
 
   const getHistory = async () => {
@@ -196,59 +194,56 @@ function App() {
 
   const multicallData = async () => {
     if ((masterContract && wethContract && web3)) {
-      const multicall = new Multicall({
-        web3Instance: web3,
-        tryAggregate: true,
-      });
+      const multicall = new Multicall({ web3Instance: web3, tryAggregate: true });
 
       const multi = [
         {
-          reference: "dataWeth",
+          reference: "balanceAcc",
           contractAddress: wethAddress,
           abi: wethABI,
-          calls: [
-            {
-              methodName: "balanceOf",
-              methodParameters: [account],
-            },
-            {
-              methodName: "balanceOf",
-              methodParameters: [masterAddress],
-            },
-          ],
+          calls: [{ reference: "balanceAcc", methodName: "balanceOf",methodParameters: [account] }]
         },
         {
-          reference: "dataMaster",
+          reference: "totalStake",
+          contractAddress: wethAddress,
+          abi: wethABI,
+          calls: [{ methodName: "balanceOf", methodParameters: [masterAddress] }]
+        },
+        {
+          reference: "allowance",
+          contractAddress: wethAddress,
+          abi: wethABI,
+          calls: [{ methodName: "allowance", methodParameters: [account, masterAddress] }]
+        },
+        {
+          reference: "userInfo",
           contractAddress: masterAddress,
           abi: masterABI,
-          calls: [
-            {
-              methodName: "userInfo",
-              methodParameters: [account],
-            },
-            {
-              methodName: "pendingDD2",
-              methodParameters: [account],
-            },
-          ],
+          calls: [{ methodName: "userInfo", methodParameters: [account] }]
         },
+        {
+          reference: "DD2earned",
+          contractAddress: masterAddress,
+          abi: masterABI,
+          calls: [{ methodName: "pendingDD2", methodParameters: [account] }]
+        }
       ];
 
       const results = await multicall.call(multi);
-      const dataMaster = results.results.dataMaster.callsReturnContext.map(item => item.returnValues);
-      const dataWeth = results.results.dataWeth.callsReturnContext.map(item => item.returnValues);
-      setStake(roundNumber(formatNumber(dataMaster[0][0].hex)))
-      setEarned(roundNumber(formatNumber(dataMaster[1][0].hex)))
-      setBalance(roundNumber(formatNumber(dataWeth[0][0].hex)))
-      setTotalStake(roundNumber(formatNumber(dataWeth[1][0].hex)))
+      setBalance(roundNumber(formatNumber(results.results.balanceAcc.callsReturnContext[0].returnValues[0].hex)))
+      setTotalStake(roundNumber(formatNumber(results.results.totalStake.callsReturnContext[0].returnValues[0].hex)))
+      setAllowance(toNumber(formatNumber(results.results.allowance.callsReturnContext[0].returnValues[0].hex)))
+      setStake(roundNumber(formatNumber(results.results.userInfo.callsReturnContext[0].returnValues[0].hex)))
+      setEarned(roundNumber(formatNumber(results.results.DD2earned.callsReturnContext[0].returnValues[0].hex)))
     }
   }
+
 
   useEffect(() => {
     if (account) {
       multicallData();
       getHistory();
-      checkApprove();
+      // checkAllowance();
       // getBalance();
       // getAmount();
       // geEarnDD2();
